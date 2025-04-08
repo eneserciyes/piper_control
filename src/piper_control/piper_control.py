@@ -168,6 +168,7 @@ class PiperControl:
 
     if not enable_arm and not enable_motion:
       # Caller requested only disabling the arm.
+      print("Robot in standby. Call `enable` to send commands.")
       return
 
     time.sleep(1.0)
@@ -177,6 +178,7 @@ class PiperControl:
     # controller. For this reason, we need to check both, and keep looping until
     # both the arm and motion controller are enabled.
 
+    # TODO(jscholz) This nested while loop of enable calls feels like overkill.
     start_time = time.time()
     finished_enabling = False
     while time.time() - start_time < enable_time_limit:
@@ -211,17 +213,22 @@ class PiperControl:
     Checks if the robot arm is enabled.
 
     Returns:
-      bool: True if the arm is enabled, False otherwise.
+      bool: True if the arm  and gripper are enabled, False otherwise.
     """
-    msgs = self.piper.GetArmLowSpdInfoMsgs()
-    return (
-        msgs.motor_1.foc_status.driver_enable_status
-        and msgs.motor_2.foc_status.driver_enable_status
-        and msgs.motor_3.foc_status.driver_enable_status
-        and msgs.motor_4.foc_status.driver_enable_status
-        and msgs.motor_5.foc_status.driver_enable_status
-        and msgs.motor_6.foc_status.driver_enable_status
+    arm_msgs = self.piper.GetArmLowSpdInfoMsgs()
+    arm_enabled = (
+        arm_msgs.motor_1.foc_status.driver_enable_status
+        and arm_msgs.motor_2.foc_status.driver_enable_status
+        and arm_msgs.motor_3.foc_status.driver_enable_status
+        and arm_msgs.motor_4.foc_status.driver_enable_status
+        and arm_msgs.motor_5.foc_status.driver_enable_status
+        and arm_msgs.motor_6.foc_status.driver_enable_status
     )
+
+    gripper_msgs = self.piper.GetArmGripperMsgs()
+    gripper_enabled = gripper_msgs.gripper_state.foc_status.driver_enable_status
+
+    return arm_enabled and gripper_enabled
 
   def enable(self) -> None:
     """

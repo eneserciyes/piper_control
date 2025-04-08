@@ -1,6 +1,24 @@
-# piper_control
+# Overview
 
-TODO
+This repo provides low-level python modules for connecting and controlling
+AgileX Piper robots.
+
+*   `piper_connect`: a python implementation of the CAN setup scripts bundled
+    with `piper_sdk`. This are not accessible on pip installs, and we found it
+    useful to be able to query and activate CAN ports programmatically.
+
+*   `piper_control`:  our lightweight wrapper of `piper_sdk` for controlling
+AgileX Piper robots.
+
+  The `piper_sdk` API is powerful and quickly maturing, but it's a bit complex
+  and under-documented, and we found it helpful to define a simple abstraction
+  for basic I/O.
+
+  There are also several sharp bits in `piper_sdk` which can make the robots
+  seem tempermental, e.g. becoming unresponsive despite repeated calls to
+  `MotionCtrl_2`, `EnableArm`, `GripperCtrl`, etc. We've bundled our solutions
+  into `PiperControl` so `reset` and the various move commands perform as one
+  would expect.
 
 ## Troubleshooting / FAQ
 

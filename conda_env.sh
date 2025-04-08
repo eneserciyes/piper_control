@@ -14,9 +14,11 @@
 # This script can be used to create a conda env for local development or testing.
 
 ENV_NAME="piper_control_env"
+YAML_FILE="piper_control_env.yaml"
+
 
 # Create the conda environment
-if conda create --name "$ENV_NAME" python=3.10 --yes; then
+if conda env update -p "$ENV_NAME" --file "$YAML_FILE" --prune; then
   echo "Conda environment '$ENV_NAME' with Python 3.10 created successfully."
 else
   echo "Failed to create conda environment '$ENV_NAME'."
@@ -39,19 +41,11 @@ else
   exit 1
 fi
 
-# Install ipykernel in the conda environment.
-if conda install ipykernel --yes; then
-  echo "ipykernel installed successfully in conda environment '$ENV_NAME'."
+# Install can-utils for
+if eval "$(sudo apt install can-utils)"; then
+  echo "can-utils installed successfully."
 else
-  echo "Failed to install ipykernel in conda environment '$ENV_NAME'."
-  exit 1
-fi
-
-# Install pyink in the conda environment so code formatting works in local development.
-if pip install pyink; then
-  echo "pyink installed successfully in conda environment '$ENV_NAME'."
-else
-  echo "Failed to install pyink in conda environment '$ENV_NAME'."
+  echo "Failed install can-utils."
   exit 1
 fi
 
