@@ -4,11 +4,78 @@ This module provides functions to find, activate, and manage CAN interfaces.
 There's nothing wrong with the scripts in piper_sdk, but they aren't available
 in obvious way when pip installing piper_sdk, and you can't easily invoke them
 from higher-level Python code.
+
+NOTE: This module is intended for Linux systems with CAN interfaces. It uses
+`ip` and `ethtool` commands to manage CAN interfaces. Ensure you have the
+necessary permissions to run these commands (e.g., using `sudo`).
 """
 
 import subprocess
 import time
 from typing import List, Optional, Tuple
+
+# ------------------------
+# Public API
+# ------------------------
+
+
+def find_ports() -> List[Tuple[str, str]]:
+  """Return a list of (interface, usb_address) pairs."""
+  _check_dependencies()
+  return _get_can_interfaces()
+
+
+def active_ports() -> List[str]:
+  """Return list of CAN interfaces that are currently up."""
+  _check_dependencies()
+  result = []
+  for iface, _ in _get_can_interfaces():
+    if _interface_is_up(iface):
+      result.append(iface)
+  return result
+
+
+def activate(
+    ports: Optional[List[Tuple[str, str]]] = None,
+    default_name_prefix: str = "can",
+    default_bitrate: int = 1000000,
+    timeout: Optional[int] = None,
+):
+  """Activate all provided ports, or auto-discover and activate all known CAN
+  interfaces.
+
+  Args:
+    ports: Optional list of (interface, usb_address) pairs to activate. If None,
+      all available ports are used.
+    default_name_prefix: Prefix for naming interfaces (e.g., can0, can1, ...).
+    default_bitrate: Bitrate to set for each CAN interface.
+    timeout: Optional timeout in seconds to wait for CAN devices to appear (if
+      none are found initially).
+  """
+  _check_dependencies()
+  ports = ports or _get_can_interfaces()
+
+  if not ports and timeout:
+    start = time.time()
+    while time.time() - start < timeout:
+      ports = _get_can_interfaces()
+      if ports:
+        break
+      time.sleep(5)
+    if not ports:
+      raise TimeoutError(
+          f"Timed out after {timeout}s waiting for CAN devices to appear"
+      )
+
+  ports = sorted(ports, key=lambda p: p[1])  # Sort by usb_addr
+
+  for idx, (iface, _) in enumerate(ports):
+    target_name = f"{default_name_prefix}{idx}"
+    current_bitrate = _get_interface_bitrate(iface)
+    if current_bitrate == default_bitrate and iface == target_name:
+      continue  # Already configured
+    _rename_and_configure(iface, target_name, default_bitrate)
+
 
 # ------------------------
 # Internal Utility Methods
@@ -110,73 +177,3 @@ def _rename_and_configure(interface: str, target_name: str, bitrate: int):
       interface = target_name
 
   subprocess.run(["sudo", "ip", "link", "set", interface, "up"], check=True)
-
-
-# ------------------------
-# Public API
-# ------------------------
-
-
-def find_ports() -> List[Tuple[str, str]]:
-  """Return a list of (interface, usb_address) pairs."""
-  _check_dependencies()
-  return _get_can_interfaces()
-
-
-def active_ports() -> List[str]:
-  """Return list of CAN interfaces that are currently up."""
-  _check_dependencies()
-  result = []
-  for iface, _ in _get_can_interfaces():
-    if _interface_is_up(iface):
-      result.append(iface)
-  return result
-
-
-def activate(
-    ports: Optional[List[Tuple[str, str]]] = None,
-    default_name_prefix: str = "can",
-    default_bitrate: int = 1000000,
-    timeout: Optional[int] = None,
-):
-  """Activate all provided ports, or auto-discover and activate all known CAN
-  interfaces.
-
-  Args:
-    ports: Optional list of (interface, usb_address) pairs to activate. If None,
-      all available ports are used.
-    default_name_prefix: Prefix for naming interfaces (e.g., can0, can1, ...).
-    default_bitrate: Bitrate to set for each CAN interface.
-    timeout: Optional timeout in seconds to wait for CAN devices to appear (if
-      none are found initially).
-  """
-  _check_dependencies()
-  ports = ports or _get_can_interfaces()
-
-  if not ports and timeout:
-    start = time.time()
-    while time.time() - start < timeout:
-      ports = _get_can_interfaces()
-      if ports:
-        break
-      time.sleep(5)
-    if not ports:
-      raise TimeoutError(
-          f"Timed out after {timeout}s waiting for CAN devices to appear"
-      )
-
-  ports = sorted(ports, key=lambda p: p[1])  # Sort by usb_addr
-
-  for idx, (iface, _) in enumerate(ports):
-    target_name = f"{default_name_prefix}{idx}"
-    current_bitrate = _get_interface_bitrate(iface)
-    if current_bitrate == default_bitrate and iface == target_name:
-      continue  # Already configured
-    _rename_and_configure(iface, target_name, default_bitrate)
-
-
-if __name__ == "__main__":
-  print(find_ports())
-  activate()
-  print(active_ports())
-  print("Done.")

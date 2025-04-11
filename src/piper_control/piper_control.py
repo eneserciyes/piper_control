@@ -197,6 +197,10 @@ class PiperControl:
           status.ctrl_mode == ControlMode.CAN_COMMAND
           and status.mode_feed == move_mode
       )
+      if enable_arm:
+        print(f"Arm enabled: {arm_enabled}")
+      if enable_motion:
+        print(f"Motion enabled: {motion_enabled}")
       # Only check the states that are requested to be enabled.
       if ((enable_arm and arm_enabled) or not enable_arm) and (
           (enable_motion and motion_enabled) or not enable_motion
@@ -307,7 +311,7 @@ class PiperControl:
       raise ValueError(f"Invalid control mode: {ctrl_mode}")
     self.piper.MotionCtrl_2(ctrl_mode, move_mode, speed, arm_controller)
 
-  def get_joint_positions(self) -> Sequence[float]:
+  def get_joint_positions(self) -> list[float]:
     """
     Returns the current joint positions as a sequence of floats (radians).
 
@@ -323,7 +327,7 @@ class PiperControl:
         self.piper.GetArmJointMsgs().joint_state.joint_6 / 1e3 * DEG_TO_RAD,
     ]
 
-  def get_joint_velocities(self) -> Sequence[float]:
+  def get_joint_velocities(self) -> list[float]:
     """
     Returns the current joint velocities as a sequence of floats.
 
@@ -339,7 +343,7 @@ class PiperControl:
         self.piper.GetArmHighSpdInfoMsgs().motor_6.motor_speed / 1e3,
     ]
 
-  def get_joint_efforts(self) -> Sequence[float]:
+  def get_joint_efforts(self) -> list[float]:
     """
     Returns the current joint efforts as a sequence of floats.
 

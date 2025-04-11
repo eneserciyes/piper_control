@@ -4,6 +4,7 @@
 # -  Python 3.10
 # -  ipykernel
 # -  piper_control (editable install)
+# -  can-utils (installed as system-wide package)
 #
 # Usage:
 #   ./conda_env.sh
@@ -17,42 +18,22 @@ ENV_NAME="piper_control_env"
 YAML_FILE="piper_control_env.yaml"
 
 
+# Install can-utils for CAN bus communication.
+if command -v candump >/dev/null 2>&1; then
+  echo "can-utils is already installed."
+else
+  if sudo apt install can-utils; then
+    echo "can-utils installed successfully."
+  else
+    echo "Failed to install can-utils."
+    exit 1
+  fi
+fi
+
 # Create the conda environment
 if conda env update -p "$ENV_NAME" --file "$YAML_FILE" --prune; then
   echo "Conda environment '$ENV_NAME' with Python 3.10 created successfully."
 else
   echo "Failed to create conda environment '$ENV_NAME'."
-  exit 1
-fi
-
-# Initialize conda.
-if eval "$(conda shell.bash hook)"; then
-  echo "Conda initialized successfully."
-else
-  echo "Failed to initialize conda."
-  exit 1
-fi
-
-# Activate the conda environment.
-if conda activate "$ENV_NAME"; then
-  echo "Conda environment '$ENV_NAME' activated successfully."
-else
-  echo "Failed to activate conda environment '$ENV_NAME'."
-  exit 1
-fi
-
-# Install can-utils for
-if eval "$(sudo apt install can-utils)"; then
-  echo "can-utils installed successfully."
-else
-  echo "Failed install can-utils."
-  exit 1
-fi
-
-# Install this project, editable.
-if pip install -e .; then
-  echo "piper_control installed successfully in conda environment '$ENV_NAME'."
-else
-  echo "Failed to install piper_control in conda environment '$ENV_NAME'."
   exit 1
 fi
