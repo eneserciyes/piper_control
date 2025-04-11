@@ -21,6 +21,12 @@ class EmergencyStop(IntEnum):
   RESUME = 0x02
 
 
+def validate_emergency_stop(
+    state: EmergencyStop,
+) -> TypeGuard[Literal[0, 1, 2]]:
+  return state in {0, 1, 2}
+
+
 class ControlMode(IntEnum):
   STANDBY = 0x00
   CAN_COMMAND = 0x01
@@ -542,6 +548,12 @@ class PiperControl:
 
     print(f"sending {position_int=} {effort_int=}")
     self.piper.GripperCtrl(position_int, effort_int, 0x01, 0)
+
+  def set_emergency_stop(self, state: EmergencyStop):
+    if not validate_emergency_stop(state):
+      raise ValueError(f"Invalid emergency stop state {state}.")
+
+    self.piper.MotionCtrl_1(state, 0, 0)
 
   def relax_joints_mit(
       self, joint_indices: Sequence[int] | None = None
