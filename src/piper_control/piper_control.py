@@ -288,30 +288,25 @@ class PiperControl:
 
     return arm_enabled and gripper_enabled
 
-  def enable(self, timeout: float = 5.0) -> None:
-    """Attempts to enable the arm and gripper retrying for up to 5 seconds."""
-    enable_flag = False
+  def enable(self, timeout_seconds: float = 5.0) -> bool:
+    """
+    Attempts to enable the arm and gripper retrying for up to 5 seconds.
+    """
     start_time = time.time()
-    elapsed_time_flag = False
 
-    while not enable_flag:
+    while True:
       elapsed_time = time.time() - start_time
-      enable_flag = self.is_enabled()
-      print("Enable status:", enable_flag)
+
+      if self.is_enabled():
+        return True
+
+      if elapsed_time > timeout_seconds:
+        print("Enable timed out.")
+        return False
 
       self.piper.EnableArm(7)
       self.piper.GripperCtrl(0, 1000, GripperCode.ENABLE, 0)
-
-      if elapsed_time > timeout:
-        print("Timeout occurred...")
-        elapsed_time_flag = True
-        enable_flag = True  # break the loop   # TODO(jscholz) do we need this?
-        break
-
-      time.sleep(0.5)  # TODO(jscholz) do we need this?
-
-    if elapsed_time_flag:
-      print("Automatic enable timed out.")
+      time.sleep(1)  # TODO(jscholz) do we need this?
 
   def disable(self) -> None:
     """
