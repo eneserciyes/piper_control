@@ -24,6 +24,13 @@ AgileX Piper robots.
 
 ## Quick start
 
+Install the dependencies and package:
+
+```shell
+sudo apt install can-utils
+pip install piper_control
+```
+
 Set up the CAN connection to the arm(s):
 
 ```python
