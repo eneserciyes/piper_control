@@ -12,6 +12,9 @@ RAD_TO_DEG = 1 / DEG_TO_RAD
 GRIPPER_ANGLE_MAX = 0.07  # 70mm
 GRIPPER_EFFORT_MAX = 2.0  # 2 Nm
 
+class JointConfig(IntEnum):
+  SET_ZERO = 0xAE
+  CLEAR_ERROR = 0xAE
 
 class EmergencyStop(IntEnum):
   INVALID = 0x00
@@ -511,3 +514,5 @@ class PiperControl:
     print(f"sending {position_int=} {effort_int=}")
     self.piper.GripperCtrl(position_int, effort_int, 0x01, 0)
 
+  def set_zero_position(self, joint_motor_num: Literal[1, 2, 3, 4, 5, 6, 7] = 7) -> None:
+    self.piper.JointConfig(joint_motor_num, JointConfig.SET_ZERO.value, 0x00, 0x00, JointConfig.CLEAR_ERROR.value)

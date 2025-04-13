@@ -16,13 +16,14 @@ def main():
   parser.add_argument(
       "--can_port",
       type=str,
-      default="can0",
+      default="can_left",
       help="The CAN port to use (default: can0).",
   )
   args = parser.parse_args()
   robot = piper_control.PiperControl(can_port=args.can_port)
   robot.reset()
   time.sleep(1.0)
+  input("Press Enter to move the arm...")
   joint_angles = list(robot.get_joint_positions())
   joint_angles[-2] -= 0.1
   print(f"Setting joint angles to {joint_angles}")
