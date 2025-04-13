@@ -372,9 +372,6 @@ class PiperControl:
     angle = raw_angle / 1e6
     effort = raw_effort / 1e3
 
-    # angle = min(max(angle, 0.0), 1.0)
-    # effort = min(max(effort, 0.0), 1.0)
-
     return angle, effort
 
   def set_joint_positions(self, positions: Sequence[float]) -> None:
@@ -465,6 +462,20 @@ class PiperControl:
       position: float | None = None,
       effort: float | None = None,
   ) -> None:
+    """
+    Controls the gripper by setting its position and effort.
+
+    Args:
+      position (float | None): The desired position of the gripper in meters.
+        Must be between 0.0 and GRIPPER_ANGLE_MAX. If None, the position is not
+        updated.
+      effort (float | None): The desired effort (force) for the gripper.
+        Must be between 0.0 and GRIPPER_EFFORT_MAX. If None, the effort is not
+        updated.
+
+    Returns:
+      None
+    """
     position_int = effort_int = 0
     if position is not None:
       position = min(max(position, 0.0), GRIPPER_ANGLE_MAX)
