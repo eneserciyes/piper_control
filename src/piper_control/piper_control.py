@@ -104,6 +104,18 @@ class GripperCode(IntEnum):
   ENABLE_AND_CLEAR_ERROR = 0x03
 
 
+class ArmInstallationPos(IntEnum):
+  UPRIGHT = 0x01  # Horizontal upright
+
+  # Side mount left. In this orientation, the rear cable is facing backward and
+  # the green LED is above the cable socket.
+  LEFT = 0x02
+
+  # Side mount right. In this orientation, the rear cable is facing backward and
+  # the green LED is below the cable socket.
+  RIGHT = 0x03
+
+
 JOINT_LIMITS_RAD = {
     "min": [-2.6179, 0.0, -2.967, -1.745, -1.22, -2.09439],
     "max": [2.6179, 3.14, 0.0, 1.745, 1.22, 2.09439],
@@ -120,14 +132,21 @@ class PiperControl:
   functionality.
   """
 
-  def __init__(self, can_port: str = "can0") -> None:
+  def __init__(
+      self,
+      can_port: str = "can0",
+      installation_pos: ArmInstallationPos = ArmInstallationPos.UPRIGHT,
+  ) -> None:
     """
     Initializes the PiperControl with a specified CAN port.
 
     Args:
       can_port (str): The CAN interface port name (e.g., "can0").
+      installation_pos: The installation pose of the arm.
     """
     self.can_port = can_port
+    self._installation_pos = installation_pos
+
     self.piper = piper_sdk.C_PiperInterface_V2(can_name=can_port)
     self.piper.ConnectPort()
 
@@ -153,10 +172,10 @@ class PiperControl:
 
     Args:
       enable_arm (bool): Whether to enable the arm.
-      enable_gripper (bool): Whether to enable the gripper.
       enable_motion (bool): Whether to enable motion control.
       arm_controller (ArmController): The arm controller mode to use.
       move_mode (MoveMode): The move mode to use.
+      enable_time_limit (float): Maximum number of seconds to retry enabling.
     """
 
     self.disable()
@@ -171,7 +190,7 @@ class PiperControl:
       print("Robot in standby. Call `enable` to send commands.")
       return
 
-    time.sleep(1.0)
+    time.sleep(0.5)
 
     # Loop until the arm is enabled.
     # The arm can sometimes get disabled while trying to enable it or the motion
@@ -184,13 +203,13 @@ class PiperControl:
     while time.time() - start_time < enable_time_limit:
       if enable_arm:
         self.enable()
-        time.sleep(1.0)
+        time.sleep(0.5)
       if enable_motion:
         self._enable_motion(
             arm_controller=arm_controller,
             move_mode=move_mode,
         )
-        time.sleep(1.0)
+        time.sleep(0.5)
       status = self.get_status().arm_status
       arm_enabled = self.is_enabled()
       motion_enabled = (
@@ -234,11 +253,9 @@ class PiperControl:
 
     return arm_enabled and gripper_enabled
 
-  def enable(self) -> None:
-    """
-    Attempts to enable the arm and gripper retrying for up to 5 seconds."""
+  def enable(self, timeout: float = 5.0) -> None:
+    """Attempts to enable the arm and gripper retrying for up to 5 seconds."""
     enable_flag = False
-    timeout = 5  # seconds
     start_time = time.time()
     elapsed_time_flag = False
 
@@ -256,7 +273,7 @@ class PiperControl:
         enable_flag = True  # break the loop   # TODO(jscholz) do we need this?
         break
 
-      time.sleep(1)  # TODO(jscholz) do we need this?
+      time.sleep(0.5)  # TODO(jscholz) do we need this?
 
     if elapsed_time_flag:
       print("Automatic enable timed out.")
@@ -285,6 +302,7 @@ class PiperControl:
         move_mode,
         0,
         arm_controller,
+        installation_pos=self._installation_pos.value,
     )
 
   def _enable_motion(
@@ -309,7 +327,13 @@ class PiperControl:
       raise ValueError(f"Invalid arm controller: {arm_controller}")
     if not validate_control_mode(ctrl_mode):
       raise ValueError(f"Invalid control mode: {ctrl_mode}")
-    self.piper.MotionCtrl_2(ctrl_mode, move_mode, speed, arm_controller)
+    self.piper.MotionCtrl_2(
+        ctrl_mode,
+        move_mode,
+        speed,
+        arm_controller,
+        installation_pos=self._installation_pos.value,
+    )
 
   def get_joint_positions(self) -> list[float]:
     """
@@ -486,3 +510,4 @@ class PiperControl:
 
     print(f"sending {position_int=} {effort_int=}")
     self.piper.GripperCtrl(position_int, effort_int, 0x01, 0)
+
