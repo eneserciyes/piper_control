@@ -77,6 +77,26 @@ def activate(
     _rename_and_configure(iface, target_name, default_bitrate)
 
 
+def get_can_adapter_serial(can_port: str) -> str | None:
+  """Convenience method that returns the serial number of a USB CAN adapter."""
+  ethtool_out = subprocess.check_output(["ethtool", "-i", can_port], text=True)
+
+  usb_port = None
+  for l in ethtool_out.splitlines():
+    if "bus-info" in l:
+      usb_port = l.split()[-1].split(":")[0]
+
+  if usb_port:
+    serial_file = f"/sys/bus/usb/devices/{usb_port}/serial"
+    try:
+      with open(serial_file, "r", encoding="utf-8") as file:
+        return file.read().strip()
+    except FileNotFoundError:
+      return None
+
+  return None
+
+
 # ------------------------
 # Internal Utility Methods
 # ------------------------
