@@ -254,7 +254,7 @@ class PiperControl:
     gripper_msgs = self.piper.GetArmGripperMsgs()
     gripper_enabled = gripper_msgs.gripper_state.foc_status.driver_enable_status
 
-    return arm_enabled and gripper_enabled
+    return arm_enabled#  and gripper_enabled
 
   def enable(self, timeout: float = 5.0) -> None:
     """Attempts to enable the arm and gripper retrying for up to 5 seconds."""
