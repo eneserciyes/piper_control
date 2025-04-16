@@ -8,7 +8,6 @@ from piper_control import piper_control
 
 def main():
     print("This script will set the zero position of the robot arm.")
-    input("Move the joints to the zero position. Press Enter to continue...")
     parser = argparse.ArgumentParser(description="Move the arm.")
     parser.add_argument(
         "--can_port",
@@ -24,8 +23,9 @@ def main():
     )
     args = parser.parse_args()
     robot = piper_control.PiperControl(can_port=args.can_port)
-    # robot.reset()
+    robot.reset(enable_arm=False)
     time.sleep(2.0)
+    input("Move the joints to the zero position. Press Enter to continue...")
     robot.set_zero_position(args.joint_motor_num)
     print("Done.")
 
