@@ -1,5 +1,6 @@
 """Simple control wrapper for piper_sdk."""
 
+import dataclasses
 import time
 from enum import IntEnum
 from typing import Literal, Sequence, TypeGuard
@@ -126,6 +127,20 @@ REST_POSITION = [0.0, 0.0, 0.0, -0.146, 0.65, -0.010]
 DOWN_POSITION = [0.0, 1.6, -0.85, 0.0, 0.75, 0.0]
 
 
+@dataclasses.dataclass
+class MitJointMoveCommand:
+  """Command bundle for moving a single joint using MIT mode."""
+
+  joint_idx: int  # 0-indexed joint id, must be in range 0 - 5.
+  target_pos: float  # joint position in radians.
+  p_gain: float = (
+      10  # position gain for the PD controller. Must be in range 0 - 100.
+  )
+  d_gain: float = (
+      0.8  # derivative gain for the PD controller. Must be in range 0 - 5.
+  )
+
+
 class PiperControl:
   """
   A wrapper around the Piper robot SDK to provide high-level control and state
@@ -135,20 +150,23 @@ class PiperControl:
   def __init__(
       self,
       can_port: str = "can0",
-      installation_pos: ArmInstallationPos = ArmInstallationPos.UPRIGHT,
   ) -> None:
     """
     Initializes the PiperControl with a specified CAN port.
 
     Args:
       can_port (str): The CAN interface port name (e.g., "can0").
-      installation_pos: The installation pose of the arm.
     """
     self.can_port = can_port
-    self._installation_pos = installation_pos
 
     self.piper = piper_sdk.C_PiperInterface_V2(can_name=can_port)
     self.piper.ConnectPort()
+
+  def set_installation_pos(
+      self, installation_pos: ArmInstallationPos = ArmInstallationPos.UPRIGHT
+  ) -> None:
+    """Sets the robot installation pose, call this right after connecting."""
+    self.piper.MotionCtrl_2(0x01, 0x01, 0, 0, 0, installation_pos.value)
 
   def get_status(self) -> piper_sdk.C_PiperInterface_V2.ArmStatus:
     """
@@ -302,7 +320,6 @@ class PiperControl:
         move_mode,
         0,
         arm_controller,
-        installation_pos=self._installation_pos.value,
     )
 
   def _enable_motion(
@@ -332,7 +349,6 @@ class PiperControl:
         move_mode,
         speed,
         arm_controller,
-        installation_pos=self._installation_pos.value,
     )
 
   def get_joint_positions(self) -> list[float]:
@@ -511,3 +527,68 @@ class PiperControl:
     print(f"sending {position_int=} {effort_int=}")
     self.piper.GripperCtrl(position_int, effort_int, 0x01, 0)
 
+  def relax_joints_mit(
+      self, joint_indices: Sequence[int] | None = None
+  ) -> None:
+    """Relaxes specific joints, using MIT mode. The joints are zero-indexed."""
+    if joint_indices is None:
+      joint_indices = range(6)
+
+    for ji in joint_indices:
+      if ji < 0 or ji > 5:
+        raise ValueError(f"Joint index out of range (0 - 5): {joint_indices}")
+
+      # Piper API is 1-indexed for joints so add 1.
+      self.piper.JointMitCtrl(ji + 1, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+  def move_to_joint_pos_mit(
+      self,
+      commands: Sequence[MitJointMoveCommand],
+      apply_sign_flip: bool = False,
+  ) -> None:
+    """Move specific joints using MIT mode.
+
+    Args:
+      commands: Per-joint move command, specifying the joint index, the target
+        position in radians, and the pd gains.
+      apply_sign_flip: We found that the MIT mode position command is interpeted
+        as a negative for certain joints. To compensate for this, some of the
+        joints have their command auto-flipped.
+    """
+    flip_mapping = [True, True, False, True, False, True]
+    joints_executed = []
+
+    for cmd in commands:
+      if cmd.joint_idx in joints_executed:
+        print("Warning: executing multiple commands on single joint.")
+
+      if cmd.joint_idx < 0 or cmd.joint_idx > 5:
+        raise ValueError(f"Joint index out of range (0 - 5): {commands}")
+
+      if cmd.p_gain < 0.0 or cmd.p_gain > 100.0:
+        raise ValueError(f"P-gain out of range (0 - 100): {commands}")
+
+      if cmd.d_gain < 0.0 or cmd.d_gain > 5.0:
+        raise ValueError(f"D-gain out of range (0 - 5): {commands}")
+
+      target_pos = cmd.target_pos
+
+      # Flip the target position if the flip flag is set.
+      if apply_sign_flip:
+        target_pos = -target_pos if flip_mapping[cmd.joint_idx] else target_pos
+
+      if (
+          target_pos < JOINT_LIMITS_RAD["min"][cmd.joint_idx]
+          or target_pos > JOINT_LIMITS_RAD["max"][cmd.joint_idx]
+      ):
+        raise ValueError("Commanded target joint angle out of range: {cmd}")
+
+      # Piper API is 1-indexed for joints so add 1.
+      self.piper.JointMitCtrl(
+          cmd.joint_idx + 1,  # joint index
+          target_pos,  # pos ref
+          0.0,  # vel ref
+          cmd.p_gain,  # p-gain
+          cmd.d_gain,  # d-gain
+          0.0,  # raw motor torque
+      )
