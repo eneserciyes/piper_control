@@ -141,6 +141,7 @@ class PiperControl:
         self,
         can_port: str = "can0",
         installation_pos: ArmInstallationPos = ArmInstallationPos.UPRIGHT,
+        gripper_on: bool = True,
     ) -> None:
         """
         Initializes the PiperControl with a specified CAN port.
@@ -148,9 +149,11 @@ class PiperControl:
         Args:
           can_port (str): The CAN interface port name (e.g., "can0").
           installation_pos: The installation pose of the arm.
+          gripper_on (bool): Whether to enable the gripper.
         """
         self.can_port = can_port
         self._installation_pos = installation_pos
+        self._gripper_on = gripper_on
 
         self.piper = piper_sdk.C_PiperInterface_V2(can_name=can_port)
         self.piper.ConnectPort()
@@ -255,8 +258,9 @@ class PiperControl:
 
         gripper_msgs = self.piper.GetArmGripperMsgs()
         gripper_enabled = gripper_msgs.gripper_state.foc_status.driver_enable_status
-
-        return arm_enabled and gripper_enabled
+        if self._gripper_on:
+            return arm_enabled and gripper_enabled
+        return arm_enabled
 
     def enable(self, timeout: float = 5.0) -> None:
         """Attempts to enable the arm and gripper retrying for up to 5 seconds."""
@@ -270,7 +274,8 @@ class PiperControl:
             print("Enable status:", enable_flag)
 
             self.piper.EnableArm(7)
-            self.piper.GripperCtrl(0, 1000, GripperCode.ENABLE, 0)
+            if self._gripper_on:
+                self.piper.GripperCtrl(0, 1000, GripperCode.ENABLE, 0)
 
             if elapsed_time > timeout:
                 print("Timeout occurred...")
@@ -288,7 +293,8 @@ class PiperControl:
         Disables the robot arm.
         """
         self.piper.DisableArm(7)
-        self.piper.GripperCtrl(0, 0, GripperCode.DISABLE_AND_CLEAR_ERROR, 0)
+        if self._gripper_on:
+            self.piper.GripperCtrl(0, 0, GripperCode.DISABLE_AND_CLEAR_ERROR, 0)
 
     def _standby(
         self,
@@ -395,6 +401,9 @@ class PiperControl:
         Returns:
           tuple[float, float]: (gripper_angle, gripper_effort)
         """
+        if not self._gripper_on:
+            print("[WARN] Gripper is disabled. Not getting gripper state.")
+            return 0.0, 0.0
         raw_angle = self.piper.GetArmGripperMsgs().gripper_state.grippers_angle
         raw_effort = self.piper.GetArmGripperMsgs().gripper_state.grippers_effort
 
@@ -505,6 +514,9 @@ class PiperControl:
         Returns:
           None
         """
+        if not self._gripper_on:
+            print("Gripper is disabled. Not setting gripper position and effort.")
+            return
         position_int = effort_int = 0
         if position is not None:
             position = min(max(position, 0.0), GRIPPER_ANGLE_MAX)
