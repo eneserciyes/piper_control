@@ -573,15 +573,15 @@ class PiperControl:
 
       target_pos = cmd.target_pos
 
-      # Flip the target position if the flip flag is set.
-      if apply_sign_flip:
-        target_pos = -target_pos if flip_mapping[cmd.joint_idx] else target_pos
-
       if (
           target_pos < JOINT_LIMITS_RAD["min"][cmd.joint_idx]
           or target_pos > JOINT_LIMITS_RAD["max"][cmd.joint_idx]
       ):
         raise ValueError("Commanded target joint angle out of range: {cmd}")
+
+      # Flip the target position if the flip flag is set.
+      if apply_sign_flip:
+        target_pos = -target_pos if flip_mapping[cmd.joint_idx] else target_pos
 
       # Piper API is 1-indexed for joints so add 1.
       self.piper.JointMitCtrl(
