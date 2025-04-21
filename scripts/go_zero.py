@@ -19,9 +19,17 @@ def main():
         default="can_left",
         help="The CAN port to use (default: can_left).",
     )
+    parser.add_argument(
+        "--no-gripper",
+        help="Whether to use the gripper (default: False).",
+        action="store_true",
+    )
+
     args = parser.parse_args()
 
-    robot = piper_control.PiperControl(can_port=args.can_port)
+    robot = piper_control.PiperControl(
+        can_port=args.can_port, gripper_on=not args.no_gripper
+    )
     robot.reset()
     time.sleep(2.0)
 
