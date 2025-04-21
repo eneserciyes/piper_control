@@ -74,6 +74,19 @@ robot.set_joint_positions(joint_angles)
 
 See the [tutorial.ipynb][tutorial] for a longer walkthrough.
 
+## Manual installation
+
+To manually install the latest beta version:
+
+```shell
+git clone https://github.com/Reimagine-Robotics/piper_control.git
+cd piper_control
+pip install .
+```
+
+NOTE: The changes on the `main` branch are in beta and may be less stable than
+the released versions of the project.
+
 ## Troubleshooting / FAQ
 
 ### Is my PiperControl working?
