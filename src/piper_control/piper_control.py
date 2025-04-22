@@ -5,6 +5,7 @@ import time
 from enum import IntEnum
 from typing import Literal, Sequence, TypeGuard
 
+import numpy as np
 import piper_sdk
 
 # Global constants
@@ -122,10 +123,18 @@ JOINT_LIMITS_RAD = {
     "max": [2.6179, 3.14, 0.0, 1.745, 1.22, 2.09439],
 }
 
+# Torque limits as absolute magnitude per joint. Units are whatever units
+# of torque the Piper MIT control accepts (Nm?). These limits make sense
+# only in the case of an upright robot orientation.
+MIT_TORQUE_LIMITS = [0.5, 3.0, 2.0, 2.0, 2.0, 0.5]
 
 REST_POSITION = [0.0, 0.0, 0.0, -0.146, 0.65, -0.010]
 DOWN_POSITION = [0.0, 1.6, -0.85, 0.0, 0.75, 0.0]
 
+# For some reason in MIT mode, some of the joints behave in a "reverse" manner,
+# whether for direct torque commands or for setting a desired position reference.
+# this mapping tells us which joints are 'flipped'
+_MIT_JOINT_FLIP = [True, True, False, True, False, True]
 
 @dataclasses.dataclass
 class MitJointMoveCommand:
@@ -134,11 +143,19 @@ class MitJointMoveCommand:
   joint_idx: int  # 0-indexed joint id, must be in range 0 - 5.
   target_pos: float  # joint position in radians.
   p_gain: float = (
-      10  # position gain for the PD controller. Must be in range 0 - 100.
+      10.0  # position gain for the PD controller. Must be in range 0 - 100.
   )
   d_gain: float = (
       0.8  # derivative gain for the PD controller. Must be in range 0 - 5.
   )
+
+
+@dataclasses.dataclass
+class MitTorqueCommand:
+  """Command bundle for applying a torque on a single joint using MIT mode."""
+
+  joint_idx: int  # 0-indexed joint id, must be in range 0 - 5.
+  torque: float  # joint torque in (presumably) Nm.
 
 
 class PiperControl:
@@ -374,14 +391,18 @@ class PiperControl:
     Returns:
       Sequence[float]: Joint velocities in radians per second.
     """
-    return [
-        self.piper.GetArmHighSpdInfoMsgs().motor_1.motor_speed / 1e3,
-        self.piper.GetArmHighSpdInfoMsgs().motor_2.motor_speed / 1e3,
-        self.piper.GetArmHighSpdInfoMsgs().motor_3.motor_speed / 1e3,
-        self.piper.GetArmHighSpdInfoMsgs().motor_4.motor_speed / 1e3,
-        self.piper.GetArmHighSpdInfoMsgs().motor_5.motor_speed / 1e3,
-        self.piper.GetArmHighSpdInfoMsgs().motor_6.motor_speed / 1e3,
+    raw_speeds = [
+        self.piper.GetArmHighSpdInfoMsgs().motor_1.motor_speed,
+        self.piper.GetArmHighSpdInfoMsgs().motor_2.motor_speed,
+        self.piper.GetArmHighSpdInfoMsgs().motor_3.motor_speed,
+        self.piper.GetArmHighSpdInfoMsgs().motor_4.motor_speed,
+        self.piper.GetArmHighSpdInfoMsgs().motor_5.motor_speed,
+        self.piper.GetArmHighSpdInfoMsgs().motor_6.motor_speed,
     ]
+
+    # API reports speeds in milli-degrees. Convert raw speeds to degrees first,
+    # then to radians.
+    return [speed / 1e3 * DEG_TO_RAD for speed in raw_speeds]
 
   def get_joint_efforts(self) -> list[float]:
     """
@@ -555,13 +576,8 @@ class PiperControl:
         as a negative for certain joints. To compensate for this, some of the
         joints have their command auto-flipped.
     """
-    flip_mapping = [True, True, False, True, False, True]
-    joints_executed = []
 
     for cmd in commands:
-      if cmd.joint_idx in joints_executed:
-        print("Warning: executing multiple commands on single joint.")
-
       if cmd.joint_idx < 0 or cmd.joint_idx > 5:
         raise ValueError(f"Joint index out of range (0 - 5): {commands}")
 
@@ -581,7 +597,7 @@ class PiperControl:
 
       # Flip the target position if the flip flag is set.
       if apply_sign_flip:
-        target_pos = -target_pos if flip_mapping[cmd.joint_idx] else target_pos
+        target_pos = -target_pos if _MIT_JOINT_FLIP[cmd.joint_idx] else target_pos
 
       # Piper API is 1-indexed for joints so add 1.
       self.piper.JointMitCtrl(
@@ -591,4 +607,46 @@ class PiperControl:
           cmd.p_gain,  # p-gain
           cmd.d_gain,  # d-gain
           0.0,  # raw motor torque
+      )
+
+  def apply_joint_torque_mit(
+      self,
+      commands: Sequence[MitTorqueCommand],
+      apply_sign_flip: bool = False,
+      apply_torque_limits: bool = True,
+  ) -> None:
+    """Apply torque to specific joints using MIT mode.
+
+    Args:
+      commands: Per-joint move command, specifying the joint index and the
+        desired torque.
+      apply_sign_flip: We found that the MIT mode command is interpeted as a
+        negative for certain joints. To compensate for this, some of the joints
+        have their command auto-flipped.
+      apply_torque_limits: Whether to clip the torque magnitude per joint to a
+        'safe' amount. Note: The clip magnitudes are chosen to make sense for a
+        upright robot configuration.
+    """
+
+    for cmd in commands:
+      # Flip the target position if the flip flag is set.
+      torque = cmd.torque
+      if apply_sign_flip:
+        torque = -torque if _MIT_JOINT_FLIP[cmd.joint_idx] else torque
+
+      if apply_torque_limits:
+        torque = np.clip(
+            torque,
+            -MIT_TORQUE_LIMITS[cmd.joint_idx],
+            MIT_TORQUE_LIMITS[cmd.joint_idx],
+        )
+
+      # Piper API is 1-indexed for joints so add 1.
+      self.piper.JointMitCtrl(
+          cmd.joint_idx + 1,  # joint index
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          torque,
       )
