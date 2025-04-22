@@ -14,8 +14,8 @@
 #
 # This script can be used to create a conda env for local development or testing.
 
-ENV_NAME="piper_control_env"
-YAML_FILE="piper_control_env.yaml"
+ENV_NAME="piper_control"
+YAML_FILE="piper_control.yaml"
 
 
 # Install can-utils for CAN bus communication.
@@ -31,7 +31,7 @@ else
 fi
 
 # Create the conda environment
-if conda env update -p "$ENV_NAME" --file "$YAML_FILE" --prune; then
+if conda env update -n "$ENV_NAME" --file "$YAML_FILE" --prune; then
   echo "Conda environment '$ENV_NAME' with Python 3.10 created successfully."
 else
   echo "Failed to create conda environment '$ENV_NAME'."
