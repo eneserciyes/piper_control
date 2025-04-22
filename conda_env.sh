@@ -32,7 +32,7 @@ fi
 
 # Create the conda environment
 if conda env update -n "$ENV_NAME" --file "$YAML_FILE" --prune; then
-  echo "Conda environment '$ENV_NAME' with Python 3.10 created successfully."
+  echo "Conda environment '$ENV_NAME' created successfully."
 else
   echo "Failed to create conda environment '$ENV_NAME'."
   exit 1
