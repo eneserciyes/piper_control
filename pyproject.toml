@@ -11,6 +11,7 @@ authors = [
 ]
 dependencies = [
     "piper_sdk>=0.2.19",
+    "numpy<2",
 ]
 
 [project.urls]
