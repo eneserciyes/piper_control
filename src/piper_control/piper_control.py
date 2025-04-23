@@ -3,7 +3,7 @@
 import dataclasses
 import time
 from enum import IntEnum
-from typing import Literal, Sequence, TypeGuard
+from typing import Callable, Literal, Sequence, TypeGuard
 
 import numpy as np
 import piper_sdk
@@ -27,17 +27,21 @@ def validate_emergency_stop(
   return state in {0, 1, 2}
 
 
+# https://github.com/agilexrobotics/piper_sdk/blob/4eddfcf817cd87de9acee316a72cf5b988025378/piper_msgs/msg_v2/feedback/arm_status.py#L108
 class ControlMode(IntEnum):
   STANDBY = 0x00
   CAN_COMMAND = 0x01
+  TEACH_MODE = 0x02
   ETHERNET = 0x03
   WIFI = 0x04
+  REMOTE = 0x05
+  LINKAGE_TEACHING = 0x06
   OFFLINE_TRAJECTORY = 0x07
 
 
 def validate_control_mode(
     mode: ControlMode,
-) -> TypeGuard[Literal[0, 1, 3, 4, 7]]:
+) -> TypeGuard[Literal[0, 1, 2, 3, 4, 5, 6, 7]]:
   """
   Validate the control mode is one of the allowed values from Piper SDK.
 
@@ -98,11 +102,42 @@ def validate_arm_controller(
   return controller in {0, 173, 255}
 
 
+# https://github.com/agilexrobotics/piper_sdk/blob/4eddfcf817cd87de9acee316a72cf5b988025378/piper_msgs/msg_v2/feedback/arm_status.py#L117
 class ArmStatus(IntEnum):
-  DISABLED = 0x00
-  ENABLED = 0x01
-  ERROR = 0x02
-  UNKNOWN = 0xFF
+  NORMAL = 0x00
+  EMERGENCY_STOP = 0x01
+  NO_SOLUTION = 0x02
+  SINGULARITY = 0x03
+  TARGET_ANGLE_EXCEEDS_LIMIT = 0x04
+  JOINT_COMMUNICATION_EXCEPTION = 0x05
+  JOINT_BRAKE_NOT_RELEASED = 0x06
+  COLLISION = 0x07
+  OVERSPEED_DURING_TEACHING = 0x08
+  JOINT_STATUS_ABNORMAL = 0x09
+  OTHER_EXCEPTION = 0x0A
+  TEACHING_RECORD = 0x0B
+  TEACHING_EXECUTION = 0x0C
+  TEACHING_PAUSE = 0x0D
+  MAIN_CONTROLLER_NTC_OVER_TEMPERATURE = 0x0E
+  RELEASE_RESISTOR_NTC_OVER_TEMPERATURE = 0x0F
+
+
+# https://github.com/agilexrobotics/piper_sdk/blob/4eddfcf817cd87de9acee316a72cf5b988025378/piper_msgs/msg_v2/feedback/arm_status.py#L140
+class TeachStatus(IntEnum):
+  OFF = 0x00
+  START_RECORD = 0x01
+  END_RECORD = 0x02
+  EXECUTE = 0x03
+  PAUSE = 0x04
+  CONTINUE = 0x05
+  TERMINATE = 0x06
+  MOVE_TO_START = 0x07
+
+
+# https://github.com/agilexrobotics/piper_sdk/blob/4eddfcf817cd87de9acee316a72cf5b988025378/piper_msgs/msg_v2/feedback/arm_status.py#L149
+class MotionStatus(IntEnum):
+  REACHED_TARGET = 0x00
+  NOT_YET_REACHED_TARGET = 0x01
 
 
 class GripperCode(IntEnum):
@@ -134,13 +169,14 @@ JOINT_LIMITS_RAD = {
 # only in the case of an upright robot orientation.
 MIT_TORQUE_LIMITS = [0.5, 3.0, 2.0, 2.0, 2.0, 0.5]
 
-REST_POSITION = [0.0, 0.0, 0.0, -0.146, 0.65, -0.010]
+REST_POSITION = [0.0, 0.05, 0.0, 0.02, 0.5, 0.0]
 DOWN_POSITION = [0.0, 1.6, -0.85, 0.0, 0.75, 0.0]
 
 # For some reason in MIT mode, some of the joints behave in a "reverse" manner,
 # whether for direct torque commands or for setting a desired position reference.
 # this mapping tells us which joints are 'flipped'
 _MIT_JOINT_FLIP = [True, True, False, True, False, True]
+
 
 @dataclasses.dataclass
 class MitJointMoveCommand:
@@ -191,7 +227,7 @@ class PiperControl:
     """Sets the robot installation pose, call this right after connecting."""
     self.piper.MotionCtrl_2(0x01, 0x01, 0, 0, 0, installation_pos.value)
 
-  def get_status(self) -> piper_sdk.C_PiperInterface_V2.ArmStatus:
+  def get_arm_status(self) -> piper_sdk.C_PiperInterface_V2.ArmStatus:
     """
     Gets the current control mode of the robot.
 
@@ -200,87 +236,91 @@ class PiperControl:
     """
     return self.piper.GetArmStatus()
 
-  def reset(
+  def get_gripper_status(
       self,
-      enable_arm: bool = True,
-      enable_motion: bool = True,
-      arm_controller: ArmController = ArmController.POSITION_VELOCITY,
-      move_mode: MoveMode = MoveMode.POSITION,
-      enable_time_limit: float = 10.0,
-  ) -> None:
+  ) -> piper_sdk.C_PiperInterface_V2.ArmGripper:
     """
-    Resets the robot controller. Beware it will fall!
-
-    Args:
-      enable_arm (bool): Whether to enable the arm.
-      enable_motion (bool): Whether to enable motion control.
-      arm_controller (ArmController): The arm controller mode to use.
-      move_mode (MoveMode): The move mode to use.
-      enable_time_limit (float): Maximum number of seconds to retry enabling.
-    """
-
-    self.disable()
-    self.piper.MotionCtrl_1(EmergencyStop.RESUME, 0, 0)
-    self._standby(
-        move_mode=move_mode,
-        arm_controller=arm_controller,
-    )
-
-    if not enable_arm and not enable_motion:
-      # Caller requested only disabling the arm.
-      print("Robot in standby. Call `enable` to send commands.")
-      return
-
-    time.sleep(0.5)
-
-    # Loop until the arm is enabled.
-    # The arm can sometimes get disabled while trying to enable it or the motion
-    # controller. For this reason, we need to check both, and keep looping until
-    # both the arm and motion controller are enabled.
-
-    # TODO(jscholz) This nested while loop of enable calls feels like overkill.
-    start_time = time.time()
-    finished_enabling = False
-    while time.time() - start_time < enable_time_limit:
-      if enable_arm:
-        self.enable()
-        time.sleep(0.5)
-      if enable_motion:
-        self._enable_motion(
-            arm_controller=arm_controller,
-            move_mode=move_mode,
-        )
-        time.sleep(0.5)
-      status = self.get_status().arm_status
-      arm_enabled = self.is_enabled()
-      motion_enabled = (
-          status.ctrl_mode == ControlMode.CAN_COMMAND
-          and status.mode_feed == move_mode
-      )
-      if enable_arm:
-        print(f"Arm enabled: {arm_enabled}")
-      if enable_motion:
-        print(f"Motion enabled: {motion_enabled}")
-      # Only check the states that are requested to be enabled.
-      if ((enable_arm and arm_enabled) or not enable_arm) and (
-          (enable_motion and motion_enabled) or not enable_motion
-      ):
-        print("✅ Finished enabling")
-        finished_enabling = True
-        break
-    if not finished_enabling:
-      print("❌ Failed to enable arm and/or motion.")
-      raise RuntimeError("Failed to enable Piper.")
-
-  def is_enabled(self) -> bool:
-    """
-    Checks if the robot arm is enabled.
+    Gets the current gripper status of the robot.
 
     Returns:
-      bool: True if the arm  and gripper are enabled, False otherwise.
+      ArmGripperStatus: The current gripper status.
+    """
+    return self.piper.GetArmGripperMsgs()
+
+  def show_status(self, arm_status=None) -> None:
+    """
+    Prints a human friendly status of the arm and gripper.
+
+    Args:
+      arm_status: Optional arm status to display. If None, the current status
+        will be fetched from the robot.
+    """
+    error_names = {False: "OK", True: "ERROR"}
+
+    arm_status = self.get_arm_status()
+    print("Arm Status:")
+    print(f"ctrl_mode: {ControlMode(arm_status.arm_status.ctrl_mode).name}")
+    print(f"arm_status: {ArmStatus(arm_status.arm_status.arm_status).name}")
+    print(f"mode_feed: {MoveMode(arm_status.arm_status.mode_feed).name}")
+    print(f"teach_mode: {TeachStatus(arm_status.arm_status.teach_status).name}")
+    print(
+        "motion_status:"
+        f" {MotionStatus(arm_status.arm_status.motion_status).name}"
+    )
+    print(f"trajectory_num: {arm_status.arm_status.trajectory_num}")
+    print(f"err_code: {arm_status.arm_status.err_code}")
+
+    # https://github.com/agilexrobotics/piper_sdk/blob/4eddfcf817cd87de9acee316a72cf5b988025378/piper_msgs/msg_v2/feedback/arm_status.py#L228
+    # Decoding err_code manually here because afaict the setter is not used to
+    # update the err_status
+    err_code = arm_status.arm_status.err_code
+    limit_errors = [bool(err_code & (1 << b)) for b in range(6)]
+    comms_errors = [bool(err_code & (1 << (b + 9))) for b in range(6)]
+    motor_errors = self.get_motor_errors()
+    for i in range(6):
+      limit = limit_errors[i]
+      comms = comms_errors[i]
+      motor = motor_errors[i]
+      print(
+          f"  Joint {i+1}:"
+          f" limit={error_names[limit]}"
+          f" comms={error_names[comms]}"
+          f" motor={error_names[motor]}"
+      )
+
+    gripper_status = self.get_gripper_status()
+    print("\nGripper Status:")
+    foc_status = gripper_status.gripper_state.foc_status
+    print(f"  voltage_too_low     : {error_names[foc_status.voltage_too_low]}")
+    print(
+        f"  motor_overheating   : {error_names[foc_status.motor_overheating]}"
+    )
+    print(
+        f"  driver_overcurrent  : {error_names[foc_status.driver_overcurrent]}"
+    )
+    print(
+        f"  driver_overheating  : {error_names[foc_status.driver_overheating]}"
+    )
+    print(f"  sensor_status       : {error_names[foc_status.sensor_status]}")
+    print(
+        f"  driver_error_status : {error_names[foc_status.driver_error_status]}"
+    )
+    print(f"  driver_enable_status: {foc_status.driver_enable_status}")
+    print(f"  homing_status       : {error_names[foc_status.homing_status]}")
+
+  def is_gripper_enabled(self) -> bool:
+    """
+    Checks if the gripper is enabled.
+    """
+    gripper_msgs = self.piper.GetArmGripperMsgs()
+    return gripper_msgs.gripper_state.foc_status.driver_enable_status
+
+  def is_arm_enabled(self) -> bool:
+    """
+    Checks if the arm is enabled.
     """
     arm_msgs = self.piper.GetArmLowSpdInfoMsgs()
-    arm_enabled = (
+    return (
         arm_msgs.motor_1.foc_status.driver_enable_status
         and arm_msgs.motor_2.foc_status.driver_enable_status
         and arm_msgs.motor_3.foc_status.driver_enable_status
@@ -289,37 +329,186 @@ class PiperControl:
         and arm_msgs.motor_6.foc_status.driver_enable_status
     )
 
-    gripper_msgs = self.piper.GetArmGripperMsgs()
-    gripper_enabled = gripper_msgs.gripper_state.foc_status.driver_enable_status
-
-    return arm_enabled and gripper_enabled
-
-  def enable(self, timeout_seconds: float = 5.0) -> bool:
+  def is_enabled(self) -> bool:
     """
-    Attempts to enable the arm and gripper retrying for up to 5 seconds.
-    """
-    start_time = time.time()
+    Checks if the robot arm and gripper are enabled.
 
+    Returns:
+      bool: True if the arm and gripper are enabled, False otherwise.
+    """
+    return self.is_arm_enabled() and self.is_gripper_enabled()
+
+  def disable_arm(
+      self,
+      *,
+      timeout_seconds: float = 10.0,
+  ):
+    """
+    Disables the arm.
+
+    WARNING: This depowers the arm and it will drop if not supported.
+    """
+    timeout_trigger = _create_timeout(timeout_seconds)
     while True:
-      elapsed_time = time.time() - start_time
+      self.set_emergency_stop(EmergencyStop.RESUME)
+      time.sleep(1.0)
+      if (
+          self.get_arm_status().arm_status.ctrl_mode == ControlMode.STANDBY
+          and self.get_arm_status().arm_status.arm_status == 0x00  # 0 = normal
+          and self.get_arm_status().arm_status.teach_status == 0x00  # 0 = off
+      ):
+        break
+      timeout_trigger()
 
-      if self.is_enabled():
-        return True
+  def enable_arm(
+      self,
+      arm_controller: ArmController = ArmController.POSITION_VELOCITY,
+      move_mode: MoveMode = MoveMode.POSITION,
+      *,
+      timeout_seconds: float = 10.0,
+  ):
+    """
+    Enables the arm.
 
-      if elapsed_time > timeout_seconds:
-        print("Enable timed out.")
-        return False
-
+    Args:
+      arm_controller (ArmController): The arm controller to use.
+      move_mode (MoveMode): The move mode to use.
+    """
+    timeout_trigger = _create_timeout(timeout_seconds)
+    while True:
       self.piper.EnableArm(7)
-      self.piper.GripperCtrl(0, 1000, GripperCode.ENABLE, 0)
-      time.sleep(1)  # TODO(jscholz) do we need this?
+      time.sleep(1.0)
+      if self.is_arm_enabled():
+        break
+      timeout_trigger()
+    # enable motion
+    # Don't loop on this because sometimes (eg when coming out of teach mode) it
+    # fails to set the control mode. If that happens you need to call
+    # disable_arm() and then call this function again. This is not done
+    # automatically because disable_arm() will cause the arm to lose power and
+    # crash down if it is not supported, so it's pretty rude to do that
+    # unexpectedly.
+    self.piper.MotionCtrl_2(
+        ControlMode.CAN_COMMAND,
+        move_mode.value,
+        100,  # move speed
+        arm_controller.value,
+    )
+    time.sleep(1.0)
 
-  def disable(self) -> None:
+  def reset_arm(
+      self,
+      arm_controller: ArmController = ArmController.POSITION_VELOCITY,
+      move_mode: MoveMode = MoveMode.POSITION,
+      *,
+      timeout_seconds: float = 10.0,
+  ):
     """
-    Disables the robot arm.
+    Resets the arm.
+
+    WARNING: This depowers the arm and it will drop if not supported.
+
+    Args:
+      arm_controller (ArmController): The arm controller to use when enabling.
+      move_mode (MoveMode): The move mode to use when enabling.
     """
-    self.piper.DisableArm(7)
-    self.piper.GripperCtrl(0, 0, GripperCode.DISABLE_AND_CLEAR_ERROR, 0)
+    timeout_trigger = _create_timeout(timeout_seconds)
+    while True:
+      self.disable_arm(timeout_seconds=timeout_seconds)
+      self.enable_arm(
+          arm_controller=arm_controller,
+          move_mode=move_mode,
+          timeout_seconds=timeout_seconds,
+      )
+      # Sometimes (eg when coming out of teach mode) the first round of resets
+      # don't work, keep going until they do.
+      if self.get_arm_status().arm_status.ctrl_mode == ControlMode.CAN_COMMAND:
+        break
+      timeout_trigger()
+
+  def disable_gripper(self, *, timeout_seconds: float = 10.0):
+    """
+    Disables the gripper.
+    """
+    timeout_trigger = _create_timeout(timeout_seconds)
+    while True:
+      self.piper.GripperCtrl(0, 0, GripperCode.DISABLE_AND_CLEAR_ERROR, 0)
+      time.sleep(1.0)
+      if not self.is_gripper_enabled():
+        break
+      timeout_trigger()
+
+  def enable_gripper(self, *, timeout_seconds: float = 10.0):
+    """
+    Enables the gripper.
+    """
+    timeout_trigger = _create_timeout(timeout_seconds)
+    while True:
+      self.piper.GripperCtrl(0, 1000, GripperCode.ENABLE, 0)
+      time.sleep(1.0)
+      if self.is_gripper_enabled():
+        break
+      else:
+        self.disable_gripper(timeout_seconds=timeout_seconds)
+      timeout_trigger()
+
+  def reset_gripper(self, *, timeout_seconds: float = 10.0):
+    """
+    Resets the gripper.
+    """
+    timeout_trigger = _create_timeout(timeout_seconds)
+    while True:
+      self.disable_gripper(timeout_seconds=timeout_seconds)
+      self.enable_gripper(timeout_seconds=timeout_seconds)
+      if self.is_gripper_enabled():
+        break
+      timeout_trigger()
+
+  def disable(self, *, timeout_seconds: float = 10.0) -> None:
+    """
+    Disables the robot arm and gripper.
+
+    WARNING: This depowers the arm and it will drop if not supported.
+    """
+    self.disable_arm(timeout_seconds=timeout_seconds)
+    self.disable_gripper(timeout_seconds=timeout_seconds)
+
+  def enable(
+      self,
+      arm_controller: ArmController = ArmController.POSITION_VELOCITY,
+      move_mode: MoveMode = MoveMode.POSITION,
+      *,
+      timeout_seconds: float = 10.0,
+  ) -> None:
+    """
+    Enables the robot arm and gripper.
+    """
+    self.enable_arm(
+        arm_controller=arm_controller,
+        move_mode=move_mode,
+        timeout_seconds=timeout_seconds,
+    )
+    self.enable_gripper(timeout_seconds=timeout_seconds)
+
+  def reset(
+      self,
+      arm_controller: ArmController = ArmController.POSITION_VELOCITY,
+      move_mode: MoveMode = MoveMode.POSITION,
+      *,
+      timeout_seconds: float = 10.0,
+  ) -> None:
+    """
+    Resets the robot arm and gripper.
+
+    WARNING: This depowers the arm and it will drop if not supported.
+
+    """
+    self.reset_arm(
+        arm_controller=arm_controller,
+        move_mode=move_mode,
+        timeout_seconds=timeout_seconds,
+    )
+    self.reset_gripper(timeout_seconds=timeout_seconds)
 
   def _standby(
       self,
@@ -555,6 +744,14 @@ class PiperControl:
 
     self.piper.MotionCtrl_1(state, 0, 0)
 
+  def get_motor_errors(self) -> list[bool]:
+    arm_msgs = self.piper.GetArmLowSpdInfoMsgs()
+    return [
+        # motor_xx attributes are 1 indexed
+        getattr(arm_msgs, f"motor_{i + 1}").foc_status.driver_error_status
+        for i in range(6)
+    ]
+
   def relax_joints_mit(
       self, joint_indices: Sequence[int] | None = None
   ) -> None:
@@ -604,7 +801,9 @@ class PiperControl:
 
       # Flip the target position if the flip flag is set.
       if apply_sign_flip:
-        target_pos = -target_pos if _MIT_JOINT_FLIP[cmd.joint_idx] else target_pos
+        target_pos = (
+            -target_pos if _MIT_JOINT_FLIP[cmd.joint_idx] else target_pos
+        )
 
       # Piper API is 1-indexed for joints so add 1.
       self.piper.JointMitCtrl(
@@ -657,3 +856,14 @@ class PiperControl:
           0.0,
           torque,
       )
+
+
+def _create_timeout(seconds: float) -> Callable[[], None]:
+  """Creates a timeout trigger that raises a TimeoutError after a given time."""
+  start_time = time.time()
+
+  def timeout_trigger() -> None:
+    if time.time() - start_time > seconds:
+      raise TimeoutError("Timeout")
+
+  return timeout_trigger
