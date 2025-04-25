@@ -236,6 +236,14 @@ class PiperControl:
     """
     return self.piper.GetArmStatus()
 
+  @property
+  def control_mode(self) -> ControlMode:
+    return ControlMode(self.get_arm_status().arm_status.ctrl_mode)
+
+  @property
+  def motion_status(self) -> MotionStatus:
+    return MotionStatus(self.get_arm_status().arm_status.motion_status)
+
   def get_gripper_status(
       self,
   ) -> piper_sdk.C_PiperInterface_V2.ArmGripper:
@@ -625,7 +633,12 @@ class PiperControl:
 
     return angle, effort
 
-  def set_joint_positions(self, positions: Sequence[float]) -> None:
+  def set_joint_positions(
+      self,
+      positions: Sequence[float],
+      *,
+      wait_for_completion: bool = False,
+  ) -> None:
     """
     Sets the joint positions using JointCtrl.
 
@@ -643,6 +656,12 @@ class PiperControl:
       joint_angle = round(pos_deg * 1e3)  # Convert to millidegrees
       joint_angles.append(joint_angle)
     self.piper.JointCtrl(*joint_angles)  # pylint: disable=no-value-for-parameter
+
+    if wait_for_completion:
+      while True:
+        time.sleep(0.05)
+        if self.motion_status == MotionStatus.REACHED_TARGET:
+          break
 
   def set_joint_zero_positions(self, joints: Sequence[int]) -> None:
     """
