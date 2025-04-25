@@ -644,6 +644,31 @@ class PiperControl:
       joint_angles.append(joint_angle)
     self.piper.JointCtrl(*joint_angles)  # pylint: disable=no-value-for-parameter
 
+  def set_joint_zero_positions(self, joints: Sequence[int]) -> None:
+    """
+    Re-zeros the specified joints at their current positions.
+
+    Args:
+      joints (Sequence[int]): The indices of the joints to zero (zero-indexed).
+    """
+
+    def _validate_zero_indexed_joint(
+        joint: int,
+    ) -> TypeGuard[Literal[0, 1, 2, 3, 4, 5]]:
+      return 0 <= joint <= 5
+
+    if not all(_validate_zero_indexed_joint(j) for j in joints):
+      raise ValueError(f"Invalid joint indices: {joints}")
+
+    for joint in joints:
+      self.piper.JointConfig(
+          joint_num=joint + 1,  # type: ignore
+          set_zero=0xAE,
+          acc_param_is_effective=0,
+          max_joint_acc=0,
+          clear_err=0,
+      )
+
   def set_joint_mit_ctrl(
       self,
       positions: Sequence[float],
