@@ -835,13 +835,13 @@ class PiperControl:
       if cmd.d_gain < 0.0 or cmd.d_gain > 5.0:
         raise ValueError(f"D-gain out of range (0 - 5): {commands}")
 
-      target_pos = cmd.target_pos
-
-      if (
-          target_pos < JOINT_LIMITS_RAD["min"][cmd.joint_idx]
-          or target_pos > JOINT_LIMITS_RAD["max"][cmd.joint_idx]
-      ):
-        raise ValueError("Commanded target joint angle out of range: {cmd}")
+      target_pos = float(
+          np.clip(
+              cmd.target_pos,
+              JOINT_LIMITS_RAD["min"][cmd.joint_idx],
+              JOINT_LIMITS_RAD["max"][cmd.joint_idx],
+          )
+      )
 
       # Flip the target position if the flip flag is set.
       if apply_sign_flip:
@@ -900,6 +900,32 @@ class PiperControl:
           0.0,
           torque,
       )
+
+  def gently_move_to_target(
+      self,
+      target_joints: Sequence[float],
+      timeout_seconds: float = 3.0,
+  ) -> None:
+    move_steps = int(timeout_seconds / 0.005)
+    p_gains = np.geomspace(0.5, 5.0, move_steps)
+
+    for i in range(move_steps):
+      joint_positions = self.get_joint_positions()
+      if np.all((np.array(joint_positions) - np.array(target_joints)) < 0.05):
+        print("Finished early")
+        break
+
+      mit_set_commands = []
+      for j in range(len(target_joints)):
+        mit_set_commands.append(
+            MitJointMoveCommand(
+                joint_idx=j,
+                target_pos=target_joints[j],
+                p_gain=p_gains[i],
+            )
+        )
+      self.move_to_joint_pos_mit(mit_set_commands, apply_sign_flip=True)
+      time.sleep(0.005)
 
 
 def _create_timeout(seconds: float) -> Callable[[], None]:
