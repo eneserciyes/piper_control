@@ -41,7 +41,7 @@ class ControlMode(IntEnum):
 
 def validate_control_mode(
     mode: ControlMode,
-) -> TypeGuard[Literal[0, 1, 2, 3, 4, 5, 6, 7]]:
+) -> TypeGuard[Literal[0, 1, 3, 4, 7]]:
   """
   Validate the control mode is one of the allowed values from Piper SDK.
 
