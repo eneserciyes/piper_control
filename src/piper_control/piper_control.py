@@ -167,6 +167,13 @@ class PiperControl:
         """
         return self.piper.GetArmStatus()
 
+    def emergency_stop(self) -> None:
+        """
+        Stops the robot immediately.
+        """
+        self.piper.MotionCtrl_1(EmergencyStop.STOP, 0, 0)
+        print("Emergency stop activated.")
+
     def reset(
         self,
         enable_arm: bool = True,
