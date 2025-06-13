@@ -6,6 +6,9 @@ python3 scripts/simple_move.py
 
 import time
 
+import mujoco
+import numpy as np
+
 from piper_control import piper_connect, piper_control, piper_init, piper_interface
 
 
@@ -29,6 +32,9 @@ def main():
   #       "troubleshooting guide @ "
   #       "https://github.com/Reimagine-Robotics/piper_control/blob/main/README.md"
   #   )
+
+  model = mujoco.MjModel.from_xml_path("/home/hello-robot/code/robot/robot/cone-e-description/robot-welded-base-and-lift.mjcf")
+  data = mujoco.MjData(model)
 
   robot = piper_interface.PiperInterface(can_port="can_right")
   robot.set_installation_pos(piper_interface.ArmInstallationPos.UPRIGHT)
@@ -60,13 +66,24 @@ def main():
       kd_gains=0.8,
       rest_position=piper_control.REST_POSITION,
   ) as controller:
-    print("moving to position ...")
-    success = controller.move_to_position(
-        [0.5, 0.7, -0.4, 0.2, 0.3, 0.5],
-        threshold=0.01,
-        timeout=5.0,
-    )
-    print(f"reached target: {success}")
+
+    try:
+      while True:
+        q = robot.get_joint_positions()
+        data.qpos[-6:] = q
+        data.qfrc_bias[-6:] = 0.0
+        mujoco.mj_forward(model, data)
+
+        print(np.round(data.qfrc_bias[-6:], 4))
+        # only apply last 3 joints:
+        tff = data.qfrc_bias[-6:]
+        # tff *= np.array([0, 0, 0, 1, 1, 1])
+
+        controller.command_torques(np.zeros(6).tolist())
+        time.sleep(0.01)
+    except KeyboardInterrupt:
+      pass
+    # print(data.qfrc_actuator)
 
   print("finished, disabling arm.")
   print("WARNING: the arm will power off and drop.")

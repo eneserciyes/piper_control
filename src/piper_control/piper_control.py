@@ -15,7 +15,6 @@ import numpy as np
 
 from piper_control import piper_interface as pi
 
-
 REST_POSITION = (0.0, 0.0, 0.0, 0.02, 0.5, 0.0)
 
 DEFAULT_GRIPPER_EFFORT = 1.0  # Ostensibly in Nm.
@@ -26,7 +25,8 @@ _CONTROL_RATE = 200.0
 # For some reason in MIT mode, some of the joints behave in a "reverse" manner,
 # whether for direct torque commands or for setting a desired position
 # reference. This mapping tells us which joints are 'flipped'.
-_MIT_JOINT_FLIP = [True, True, False, True, False, True]
+# _MIT_JOINT_FLIP = [True, True, False, True, False, True]
+_MIT_JOINT_FLIP = [False, False, False, False, False, False]
 
 # These limits make sense only for upright robot arm.
 _MIT_TORQUE_LIMITS = [0.5, 3.0, 2.0, 2.0, 2.0, 0.5]
@@ -276,7 +276,7 @@ class MitJointPositionController(JointPositionController):
     for ji, torque in enumerate(torques):
       if self._joint_flip_map:
         torque = -torque if self._joint_flip_map[ji] else torque
-      torque = np.clip(torque, -_MIT_TORQUE_LIMITS[ji], _MIT_TORQUE_LIMITS[ji])
+      # torque = np.clip(torque, -_MIT_TORQUE_LIMITS[ji], _MIT_TORQUE_LIMITS[ji])
 
       self._piper.command_joint_torque_mit(ji, torque)
 
