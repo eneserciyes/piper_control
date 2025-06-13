@@ -18,6 +18,8 @@ from piper_control import piper_interface as pi
 
 REST_POSITION = (0.0, 0.0, 0.0, 0.02, 0.5, 0.0)
 
+DEFAULT_GRIPPER_EFFORT = 1.0  # Ostensibly in Nm.
+
 # Control rate in Hz. Frequency at which to send joint commands to the robot.
 _CONTROL_RATE = 200.0
 
@@ -25,6 +27,9 @@ _CONTROL_RATE = 200.0
 # whether for direct torque commands or for setting a desired position
 # reference. This mapping tells us which joints are 'flipped'.
 _MIT_JOINT_FLIP = [True, True, False, True, False, True]
+
+# These limits make sense only for upright robot arm.
+_MIT_TORQUE_LIMITS = [0.5, 3.0, 2.0, 2.0, 2.0, 0.5]
 
 # Allowed gains range allowed for the Mit controller.
 _MAX_KP_GAIN = 100.0
@@ -68,6 +73,16 @@ class JointPositionController(abc.ABC):
       threshold: Sequence[float] | float = 0.001,
       timeout: float = 1.0,
   ) -> bool:
+    """Moves the arm to a particular target pose. This is a blocking call.
+
+    Args:
+      target: list of joint angles (in radians) to move the arm to.
+      threshold: a threshold error for when we consider the target reached.
+      timeout: timeout in seconds, after which we finish blocking.
+
+    Returns whether the target joint pose was reached (error within threshold).
+    """
+
     assert len(target) == 6
 
     start_time = time.time()
@@ -184,9 +199,9 @@ class MitJointPositionController(JointPositionController):
     )
 
   def stop(self) -> None:
-    # Move to the rest positio if one is specified.
+    # Move to the rest position if one is specified.
     if self._rest_position:
-      self.move_to_position(
+      self._smoothly_move_to_position(
           self._rest_position,
           threshold=0.1,  # No need to be precise.
           timeout=2.0,
@@ -212,8 +227,14 @@ class MitJointPositionController(JointPositionController):
     assert len(kp_gains) == 6
     assert len(kd_gains) == 6
 
+    cur_joints = self._piper.get_joint_positions()
     for ji, pos in enumerate(target):
-      kp = kp_gains[ji]
+      joint_error = np.abs(cur_joints[ji] - pos)
+
+      # Scale the p-gain as a function of the error. When far away, have a lower
+      # gain than when closer to the target. This has the beneficit of the arm
+      # being less jerky on initial movement when the target is far away.
+      kp = np.clip(1.5 / (joint_error + 0.0001), 0.75, kp_gains[ji])
       kd = kd_gains[ji]
 
       # Clip the position to limits so that we don't send invalid commands.
@@ -245,6 +266,50 @@ class MitJointPositionController(JointPositionController):
       )
       time.sleep(1.0 / _CONTROL_RATE)
 
+  def command_torques(
+      self,
+      torques: Sequence[float],
+  ) -> None:
+
+    assert len(torques) == 6
+
+    for ji, torque in enumerate(torques):
+      if self._joint_flip_map:
+        torque = -torque if self._joint_flip_map[ji] else torque
+      torque = np.clip(torque, -_MIT_TORQUE_LIMITS[ji], _MIT_TORQUE_LIMITS[ji])
+
+      self._piper.command_joint_torque_mit(ji, torque)
+
+  def _smoothly_move_to_position(
+      self,
+      target: Sequence[float],
+      threshold: Sequence[float] | float = 0.001,
+      timeout: float = 1.0,
+  ) -> bool:
+    assert len(target) == 6
+
+    ramp_steps = 400  # 2 seconds
+    p_gains = np.geomspace(0.5, 5.0, ramp_steps)
+
+    step_idx = 0
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+      if step_idx > len(p_gains):
+        p_gain = p_gains[-1]
+      else:
+        p_gain = p_gains[step_idx]
+
+      self.command_joints(target, kp_gains=[p_gain] * 6)
+      cur_joints = self.piper.get_joint_positions()
+
+      if _joints_within_target_threshold(cur_joints, target, threshold):
+        return True
+
+      time.sleep(1.0 / _CONTROL_RATE)
+      step_idx += 1
+
+    return False
+
 
 class GripperController(abc.ABC):
   """Gripper controller."""
@@ -270,9 +335,13 @@ class GripperController(abc.ABC):
   def command_close(self) -> None:
     self.piper.command_gripper(position=0.0)
 
-  def command_position(self, target: float) -> None:
+  def command_position(
+      self,
+      target: float,
+      effort: float = DEFAULT_GRIPPER_EFFORT,
+  ) -> None:
     target = np.clip(target, 0.0, pi.GRIPPER_ANGLE_MAX)
-    self.piper.command_gripper(position=target)
+    self.piper.command_gripper(position=target, effort=effort)
 
   def start(self) -> None:
     pass
