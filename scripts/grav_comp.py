@@ -35,7 +35,7 @@ def main():
     #   )
 
     model = mujoco.MjModel.from_xml_path(
-        "/home/hello-robot/code/robot/robot/cone-e-description/arm-upright.mjcf"
+        "/home/enes/ws/robot/robot/cone-e-description/arm-upright.mjcf"
     )
 
     data = mujoco.MjData(model)
@@ -64,6 +64,8 @@ def main():
 
     # Move the arm joints using Mit mode controller.
     input("Press Enter to move arm...")
+    log_tff = []
+    log_tau = []
     with piper_control.MitJointPositionController(
         robot,
         kp_gains=5.0,
@@ -71,20 +73,37 @@ def main():
         rest_position=piper_control.REST_POSITION,
     ) as controller:
         try:
+            last_tau = np.zeros(6)
             while True:
                 q = robot.get_joint_positions()
+                tau = np.array(robot.get_joint_efforts())
+                last_tau = last_tau * 0.95 + tau * 0.05
+
                 data.qpos[-6:] = q
                 data.qfrc_bias[-6:] = 0.0
                 mujoco.mj_forward(model, data)
 
-                print(np.round(data.qfrc_bias[-6:], 4))
-                tff = data.qfrc_bias[-6:] * np.array([1 / 4, 1 / 4, 1 / 4, 1, 1, 1])
+                tff = (
+                    np.array([2.16, 2.16, 2.18, 2, 2, 2])
+                    * data.qfrc_bias[-6:].copy()
+                    / np.array([4, 3.97, 3.5, 0.6, 0.6, 0.6])
+                )
+                log_tff.append(tff)
+                log_tau.append(last_tau)
 
                 controller.command_torques(tff)
-                time.sleep(0.01)
+                time.sleep(0.005)
         except KeyboardInterrupt:
             pass
         # print(data.qfrc_actuator)
+        finally:
+            controller.command_torques(np.zeros(6).tolist())
+            print("Stopping controller and disabling arm...")
+            np.savez(
+                "grav_comp_data_commanded.npz",
+                tff=np.array(log_tff),
+                tau=np.array(log_tau),
+            )
 
     print("finished, disabling arm.")
     print("WARNING: the arm will power off and drop.")
