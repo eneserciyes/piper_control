@@ -12,7 +12,7 @@
     "[python]": {
         "editor.rulers": [80],
         "editor.tabSize": 2,
-        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.defaultFormatter": "charliermarsh.ruff",
         "editor.formatOnSave": true,
         "editor.detectIndentation": false,
         "editor.codeActionsOnSave": {
